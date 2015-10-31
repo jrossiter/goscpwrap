@@ -1,4 +1,4 @@
-# goscp - A Go SCP Client 
+# goscp - A Go SCP wrapper 
 
 goscp supports recursive file and directory handling for both uploads and downloads.
  
