@@ -14,6 +14,7 @@ var sshClient *ssh.Client
 // Connect with your SSH client
 // ...
 
+// Create a goscp client
 c := goscp.NewClient(sshClient)
 
 // Verbose output when communicating with host
@@ -56,7 +57,7 @@ c.StopOnOSError = true
 
 // Path on your local machine
 // Supports both files and directories
-c.Upload("~/Documents/media/videos")
+c.Upload("~/Projects/goscp-src")
 if c.GetLastError() != nil {
     log.Fatal(err)
 }
