@@ -67,4 +67,8 @@ BSD 3-Clause "New" License
 
 ## Related
 
-* How the SCP protocol works - https://blogs.oracle.com/janp/entry/how_the_scp_protocol_works
+* [How the SCP protocol works][oracle-scp-how] 
+* [GB][gb]
+
+[gb]: http://getgb.io/
+[oracle-scp-how]: https://blogs.oracle.com/janp/entry/how_the_scp_protocol_works
