@@ -442,7 +442,6 @@ type Reader struct {
 func (r *Reader) Read(p []byte) (n int, err error) {
 	select {
 	case <-r.cancel:
-		log.Println("CANCELLED!!")
 		return 0, errors.New("Transfer cancelled")
 	default:
 		return r.Reader.Read(p)
