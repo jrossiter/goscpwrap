@@ -43,7 +43,7 @@ type Client struct {
 	scpStdinPipe io.WriteCloser
 
 	// Stdout for SSH session
-	scpStdoutPipe *Reader
+	scpStdoutPipe *reader
 }
 
 // Returns a ssh.Client wrapper.
@@ -111,7 +111,7 @@ func (c *Client) Download(remotePath string) {
 		c.sendAck()
 
 		// Wrapper to support cancellation
-		c.scpStdoutPipe = &Reader{
+		c.scpStdoutPipe = &reader{
 			Reader: bufio.NewReader(r),
 			cancel: make(chan struct{}, 1),
 		}
@@ -200,7 +200,7 @@ func (c *Client) Upload(localPath string) {
 		}
 
 		// Wrapper to support cancellation
-		c.scpStdoutPipe = &Reader{
+		c.scpStdoutPipe = &reader{
 			Reader: bufio.NewReader(r),
 			cancel: make(chan struct{}, 1),
 		}
@@ -431,7 +431,7 @@ func (c *Client) newProgressBar(fileLength int) *pb.ProgressBar {
 }
 
 // Wrapper to support cancellation
-type Reader struct {
+type reader struct {
 	*bufio.Reader
 
 	// Cancel an ongoing transfer
@@ -439,7 +439,7 @@ type Reader struct {
 }
 
 // Additional cancellation check
-func (r *Reader) Read(p []byte) (n int, err error) {
+func (r *reader) Read(p []byte) (n int, err error) {
 	select {
 	case <-r.cancel:
 		return 0, errors.New("Transfer cancelled")
