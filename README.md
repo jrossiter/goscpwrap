@@ -21,6 +21,9 @@ c := goscp.NewClient(sshClient)
 // Outputs sent and received scp protocol messages to console
 c.Verbose = true
 
+// Show a progress bar for each file being sent or received
+c.ShowProgressBar = true
+
 // Each file being transferred has a progress bar output to console
 c.ProgressCallback = func(output string) {
     // This allows you to control what will happen instead 

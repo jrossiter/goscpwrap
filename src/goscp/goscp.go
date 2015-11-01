@@ -26,9 +26,8 @@ var (
 )
 
 type Client struct {
-	SSHClient        *ssh.Client
-	ProgressCallback func(out string)
-	DestinationPath  []string
+	SSHClient       *ssh.Client
+	DestinationPath []string
 
 	// Errors that have occurred while communicating with host
 	errors []error
@@ -38,6 +37,12 @@ type Client struct {
 
 	// Stop transfer on OS error - occurs during filepath.Walk
 	StopOnOSError bool
+
+	// Show progress bar
+	ShowProgressBar bool
+
+	// Control progress bar output
+	ProgressCallback func(out string)
 
 	// Stdin for SSH session
 	scpStdinPipe io.WriteCloser
@@ -52,6 +57,7 @@ func NewClient(c *ssh.Client) *Client {
 	return &Client{
 		SSHClient:       c,
 		DestinationPath: []string{"."},
+		ShowProgressBar: true,
 	}
 }
 
@@ -316,12 +322,18 @@ func (c *Client) file(msg string) error {
 	}
 	defer localFile.Close()
 
-	bar := c.newProgressBar(fileLen)
-	bar.Start()
-	defer bar.Finish()
+	var w io.Writer
+	if c.ShowProgressBar {
+		bar := c.newProgressBar(fileLen)
+		bar.Start()
+		defer bar.Finish()
 
-	mw := io.MultiWriter(localFile, bar)
-	if n, err := io.CopyN(mw, c.scpStdoutPipe, int64(fileLen)); err != nil || n < int64(fileLen) {
+		w = io.MultiWriter(localFile, bar)
+	} else {
+		w = localFile
+	}
+
+	if n, err := io.CopyN(w, c.scpStdoutPipe, int64(fileLen)); err != nil || n < int64(fileLen) {
 		c.sendErr()
 		return err
 	}
@@ -389,14 +401,19 @@ func (c *Client) handleItem(path string, info os.FileInfo, err error) error {
 		c.sendFileMessage(0644, info.Size(), filepath.Base(path))
 
 		if info.Size() > 0 {
-			bar := c.newProgressBar(int(info.Size()))
-			bar.Start()
-			defer bar.Finish()
+			var w io.Writer
+			if c.ShowProgressBar {
+				bar := c.newProgressBar(int(info.Size()))
+				bar.Start()
+				defer bar.Finish()
 
-			mw := io.MultiWriter(c.scpStdinPipe, bar)
+				w = io.MultiWriter(c.scpStdinPipe, bar)
+			} else {
+				w = c.scpStdinPipe
+			}
 
 			c.outputInfo(fmt.Sprintf("Sending file: %s", path))
-			if _, err := io.Copy(mw, targetItem); err != nil {
+			if _, err := io.Copy(w, targetItem); err != nil {
 				c.sendErr()
 				return err
 			}
