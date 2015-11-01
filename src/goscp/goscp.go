@@ -345,7 +345,9 @@ func (c *Client) parseMessage(msg string, rx *regexp.Regexp) (map[string]string,
 
 // Go back up one directory
 func (c *Client) upDirectory() {
-	c.DestinationPath = c.DestinationPath[:len(c.DestinationPath)-1]
+	if len(c.DestinationPath) > 0 {
+		c.DestinationPath = c.DestinationPath[:len(c.DestinationPath)-1]
+	}
 }
 
 // Handle each item coming through filepath.Walk
