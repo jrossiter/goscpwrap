@@ -1,16 +1,20 @@
 package goscp
 
 import (
+	"fmt"
+	"log"
 	"os"
+	"path/filepath"
 	"reflect"
 	"regexp"
 	"testing"
+	"time"
 )
 
-/*
-todo
-	Chdir
-*/
+var (
+	// Items created during testing
+	created []string
+)
 
 func TestMain(m *testing.M) {
 	setUp()
@@ -23,17 +27,26 @@ func TestMain(m *testing.M) {
 }
 
 func setUp() {
+	err := os.Chdir(os.TempDir())
+	if err != nil {
+		log.Fatal(err)
+	}
 
+	log.Println("Running tests in:", os.TempDir())
 }
 
 func tearDown() {
+	for _, v := range created {
+		log.Println("Removing", v)
+		os.Remove(v)
+	}
+}
 
+func expectedError(t *testing.T, received, expected interface{}) {
+	t.Errorf("received: %v, expected: %v", received, expected)
 }
 
 func TestUpDirectory(t *testing.T) {
-	/*
-		c.DestinationPath = c.DestinationPath[:len(c.DestinationPath)-1]
-	*/
 	tests := []struct {
 		Input    []string
 		Expected []string
@@ -57,7 +70,7 @@ func TestUpDirectory(t *testing.T) {
 		c.DestinationPath = v.Input
 		c.upDirectory()
 		if !reflect.DeepEqual(c.DestinationPath, v.Expected) {
-			expectedError(t, "TestUpDirectory", c.DestinationPath, v.Expected)
+			expectedError(t, c.DestinationPath, v.Expected)
 		}
 	}
 }
@@ -110,17 +123,59 @@ func TestParseMessage(t *testing.T) {
 		output, err := c.parseMessage(v.Input, v.Regex)
 		if err != nil {
 			if err.Error() != v.ExpectedError {
-				expectedError(t, "TestParseMessage", err, v.ExpectedError)
+				expectedError(t, err, v.ExpectedError)
 			}
 			continue
 		}
 
 		if !reflect.DeepEqual(output, v.Expected) {
-			expectedError(t, "TestParseMessage", output, v.Expected)
+			expectedError(t, output, v.Expected)
 		}
 	}
 }
 
-func expectedError(t *testing.T, fn string, received, expected interface{}) {
-	t.Errorf("%s - received: %v, expected: %v", fn, received, expected)
+func TestDirectory(t *testing.T) {
+	uts := time.Now().Unix()
+	dirName := fmt.Sprintf("%s-%v", "mydir", uts)
+
+	tests := []struct {
+		StartPath               string
+		InputPath               string
+		ExpectedPath            string
+		ExpectedDestinationPath []string
+	}{
+		{
+			StartPath:               ".",
+			InputPath:               fmt.Sprintf("D0755 0 %s", dirName),
+			ExpectedPath:            dirName,
+			ExpectedDestinationPath: []string{".", dirName},
+		},
+	}
+
+	for _, v := range tests {
+		c := Client{}
+		c.SetDestinationPath(v.StartPath)
+		c.directory(v.InputPath)
+
+		path := filepath.Join(c.DestinationPath...)
+		if _, err := os.Stat(path); os.IsNotExist(err) {
+			expectedError(t, err, path)
+			continue
+		}
+		created = append(created, path)
+
+		if !reflect.DeepEqual(c.DestinationPath, v.ExpectedDestinationPath) {
+			expectedError(t, c.DestinationPath, v.ExpectedDestinationPath)
+		}
+	}
+
 }
+
+/*
+todo
+file
+handleItem
+cancel
+
+
+*/
