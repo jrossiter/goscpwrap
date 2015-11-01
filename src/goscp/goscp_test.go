@@ -1,7 +1,10 @@
 package goscp
 
 import (
+	"bufio"
+	"bytes"
 	"fmt"
+	"io/ioutil"
 	"log"
 	"os"
 	"path/filepath"
@@ -69,6 +72,8 @@ func TestUpDirectory(t *testing.T) {
 	for _, v := range tests {
 		c.DestinationPath = v.Input
 		c.upDirectory()
+
+		// Check paths match
 		if !reflect.DeepEqual(c.DestinationPath, v.Expected) {
 			expectedError(t, c.DestinationPath, v.Expected)
 		}
@@ -128,6 +133,7 @@ func TestParseMessage(t *testing.T) {
 			continue
 		}
 
+		// Check parts match
 		if !reflect.DeepEqual(output, v.Expected) {
 			expectedError(t, output, v.Expected)
 		}
@@ -157,6 +163,7 @@ func TestDirectory(t *testing.T) {
 		c.SetDestinationPath(v.StartPath)
 		c.directory(v.InputPath)
 
+		// Check dir was created
 		path := filepath.Join(c.DestinationPath...)
 		if _, err := os.Stat(path); os.IsNotExist(err) {
 			expectedError(t, err, path)
@@ -164,16 +171,66 @@ func TestDirectory(t *testing.T) {
 		}
 		created = append(created, path)
 
+		// Check destination paths match
 		if !reflect.DeepEqual(c.DestinationPath, v.ExpectedDestinationPath) {
 			expectedError(t, c.DestinationPath, v.ExpectedDestinationPath)
 		}
 	}
+}
 
+func TestFile(t *testing.T) {
+	uts := time.Now().Unix()
+	fileName := fmt.Sprintf("%s-%v", "goscp-test-file", uts)
+	fileContent := "hello world"
+
+	tests := []struct {
+		StartPath    string
+		InputPath    string
+		FileContent  string
+		ExpectedPath string
+	}{
+		{
+			StartPath:    ".",
+			InputPath:    fmt.Sprintf("C0755 %d %s", len(fileContent), fileName),
+			FileContent:  fileContent,
+			ExpectedPath: fileName,
+		},
+		{
+			StartPath:    ".",
+			InputPath:    fmt.Sprintf("C0755 %d %s", 0, fileName),
+			FileContent:  "",
+			ExpectedPath: fileName,
+		},
+	}
+
+	for _, v := range tests {
+		c := Client{}
+		c.SetDestinationPath(v.StartPath)
+
+		dummy := bytes.NewBuffer([]byte(v.FileContent))
+		rdr := &reader{Reader: bufio.NewReader(dummy)}
+		c.scpStdoutPipe = rdr
+
+		c.file(v.InputPath)
+
+		// Check file was created
+		if _, err := os.Stat(v.ExpectedPath); os.IsNotExist(err) {
+			expectedError(t, err, v.ExpectedPath)
+			continue
+		}
+
+		// Check file content
+		bytes, _ := ioutil.ReadFile(v.ExpectedPath)
+		if string(bytes) != v.FileContent {
+			expectedError(t, string(bytes), v.FileContent)
+		}
+
+		os.Remove(v.ExpectedPath)
+	}
 }
 
 /*
 todo
-file
 handleItem
 cancel
 
