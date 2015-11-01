@@ -316,7 +316,7 @@ func (c *Client) file(msg string) error {
 	}
 	defer localFile.Close()
 
-	bar := c.NewProgressBar(fileLen)
+	bar := c.newProgressBar(fileLen)
 	bar.Start()
 	defer bar.Finish()
 
@@ -387,7 +387,7 @@ func (c *Client) handleItem(path string, info os.FileInfo, err error) error {
 		c.sendFileMessage(0644, info.Size(), filepath.Base(path))
 
 		if info.Size() > 0 {
-			bar := c.NewProgressBar(int(info.Size()))
+			bar := c.newProgressBar(int(info.Size()))
 			bar.Start()
 			defer bar.Finish()
 
@@ -416,7 +416,7 @@ func (c *Client) outputInfo(s ...string) {
 }
 
 // Create progress bar
-func (c *Client) NewProgressBar(fileLength int) *pb.ProgressBar {
+func (c *Client) newProgressBar(fileLength int) *pb.ProgressBar {
 	bar := pb.New(fileLength)
 	bar.Callback = c.ProgressCallback
 	bar.ShowSpeed = true
