@@ -30,8 +30,8 @@ type Client struct {
 	ProgressCallback func(out string)
 	DestinationPath  []string
 
-	// Last error that occurred
-	lastError error
+	// Errors that have occurred while communicating with host
+	errors []error
 
 	// Verbose output when communicating with host
 	Verbose bool
@@ -43,7 +43,7 @@ type Client struct {
 	scpStdinPipe io.WriteCloser
 
 	// Stdout for SSH session
-	scpStdoutPipe *bufio.Reader
+	scpStdoutPipe *Reader
 }
 
 // Returns a ssh.Client wrapper.
@@ -60,20 +60,35 @@ func (c *Client) SetDestinationPath(path string) {
 	c.DestinationPath = []string{path}
 }
 
-func (c *Client) setLastError(err error) {
-	c.lastError = err
+func (c *Client) addError(err error) {
+	c.errors = append(c.errors, err)
 }
 
 // GetLastError should be queried after a call to Download() or Upload().
 func (c *Client) GetLastError() error {
-	return c.lastError
+	if len(c.errors) > 0 {
+		return c.errors[len(c.errors)-1]
+	}
+	return nil
+}
+
+// GetErrorStack returns all errors that have occurred so far
+func (c *Client) GetErrorStack() []error {
+	return c.errors
+}
+
+// Cancel an ongoing operation
+func (c *Client) Cancel() {
+	if c.scpStdoutPipe != nil {
+		c.scpStdoutPipe.cancel <- struct{}{}
+	}
 }
 
 // Download remotePath to c.DestinationPath
 func (c *Client) Download(remotePath string) {
 	session, err := c.SSHClient.NewSession()
 	if err != nil {
-		c.setLastError(err)
+		c.addError(err)
 		return
 	}
 	defer session.Close()
@@ -81,28 +96,32 @@ func (c *Client) Download(remotePath string) {
 	go func() {
 		c.scpStdinPipe, err = session.StdinPipe()
 		if err != nil {
-			c.setLastError(err)
+			c.addError(err)
 			return
 		}
 		defer c.scpStdinPipe.Close()
 
 		r, err := session.StdoutPipe()
 		if err != nil {
-			c.setLastError(err)
+			c.addError(err)
 			return
 		}
 
 		// Initialise transfer
 		c.sendAck()
 
-		c.scpStdoutPipe = bufio.NewReader(r)
+		// Wrapper to support cancellation
+		c.scpStdoutPipe = &Reader{
+			Reader: bufio.NewReader(r),
+			cancel: make(chan struct{}, 1),
+		}
 
 		for {
 			c.outputInfo("Reading message from source")
 			msg, err := c.scpStdoutPipe.ReadString('\n')
 			if err != nil {
 				if err != io.EOF {
-					c.setLastError(err)
+					c.addError(err)
 				}
 				return
 			}
@@ -114,25 +133,32 @@ func (c *Client) Download(remotePath string) {
 			// Confirm message
 			c.sendAck()
 
-			if strings.HasPrefix(msg, "C") {
+			switch {
+			case c.isFileCopyMsg(msg):
 				// Handle incoming file
 				err := c.file(msg)
 				if err != nil {
-					c.setLastError(err)
+					c.addError(err)
 					return
 				}
-			} else if strings.HasPrefix(msg, "D") {
+			case c.isDirCopyMsg(msg):
 				// Handling incoming directory
 				err := c.directory(msg)
 				if err != nil {
-					c.setLastError(err)
+					c.addError(err)
 					return
 				}
-			} else if msg == endDir {
+			case msg == endDir:
 				// Directory finished, go up a directory
 				c.upDirectory()
-			} else {
-				c.setLastError(fmt.Errorf("Unhandled message: [%q]\n", msg))
+			case c.isWarningMsg(msg):
+				c.addError(fmt.Errorf("Warning message: [%q]\n", msg))
+				return
+			case c.isErrorMsg(msg):
+				c.addError(fmt.Errorf("Error message: [%q]\n", msg))
+				return
+			default:
+				c.addError(fmt.Errorf("Unhandled message: [%q]\n", msg))
 				return
 			}
 
@@ -143,7 +169,7 @@ func (c *Client) Download(remotePath string) {
 
 	cmd := fmt.Sprintf("scp -rf %s", remotePath)
 	if err := session.Run(cmd); err != nil {
-		c.setLastError(err)
+		c.addError(err)
 		return
 	}
 
@@ -154,7 +180,7 @@ func (c *Client) Download(remotePath string) {
 func (c *Client) Upload(localPath string) {
 	session, err := c.SSHClient.NewSession()
 	if err != nil {
-		c.setLastError(err)
+		c.addError(err)
 		return
 	}
 	defer session.Close()
@@ -162,18 +188,22 @@ func (c *Client) Upload(localPath string) {
 	go func() {
 		c.scpStdinPipe, err = session.StdinPipe()
 		if err != nil {
-			c.setLastError(err)
+			c.addError(err)
 			return
 		}
 		defer c.scpStdinPipe.Close()
 
 		r, err := session.StdoutPipe()
 		if err != nil {
-			c.setLastError(err)
+			c.addError(err)
 			return
 		}
 
-		c.scpStdoutPipe = bufio.NewReader(r)
+		// Wrapper to support cancellation
+		c.scpStdoutPipe = &Reader{
+			Reader: bufio.NewReader(r),
+			cancel: make(chan struct{}, 1),
+		}
 
 		// This has already been used in the cmd call below
 		// so it can be reused for 'end of directory' message handling
@@ -181,7 +211,7 @@ func (c *Client) Upload(localPath string) {
 
 		err = filepath.Walk(localPath, c.handleItem)
 		if err != nil {
-			c.setLastError(err)
+			c.addError(err)
 			return
 		}
 
@@ -194,7 +224,7 @@ func (c *Client) Upload(localPath string) {
 
 	cmd := fmt.Sprintf("scp -rt %s", filepath.Join(c.DestinationPath...))
 	if err := session.Run(cmd); err != nil {
-		c.setLastError(err)
+		c.addError(err)
 		return
 	}
 
@@ -209,6 +239,26 @@ func (c *Client) sendAck() {
 // Send an error message
 func (c *Client) sendErr() {
 	fmt.Fprint(c.scpStdinPipe, "\x02")
+}
+
+// Check if an incoming message is a file copy message
+func (c *Client) isFileCopyMsg(s string) bool {
+	return strings.HasPrefix(s, "C")
+}
+
+// Check if an incoming message is a directory copy message
+func (c *Client) isDirCopyMsg(s string) bool {
+	return strings.HasPrefix(s, "D")
+}
+
+// Check if an incoming message is a warning
+func (c *Client) isWarningMsg(s string) bool {
+	return strings.HasPrefix(s, "\x01")
+}
+
+// Check if an incoming message is an error
+func (c *Client) isErrorMsg(s string) bool {
+	return strings.HasPrefix(s, "\x02")
 }
 
 // Send a directory message while in source mode
@@ -268,15 +318,13 @@ func (c *Client) file(msg string) error {
 
 	bar := c.NewProgressBar(fileLen)
 	bar.Start()
+	defer bar.Finish()
 
 	mw := io.MultiWriter(localFile, bar)
 	if n, err := io.CopyN(mw, c.scpStdoutPipe, int64(fileLen)); err != nil || n < int64(fileLen) {
-		fmt.Println("Failed at: ", n)
 		c.sendErr()
 		return err
 	}
-
-	bar.Finish()
 
 	return nil
 }
@@ -341,20 +389,16 @@ func (c *Client) handleItem(path string, info os.FileInfo, err error) error {
 		if info.Size() > 0 {
 			bar := c.NewProgressBar(int(info.Size()))
 			bar.Start()
-			//
+			defer bar.Finish()
+
 			mw := io.MultiWriter(c.scpStdinPipe, bar)
 
 			c.outputInfo(fmt.Sprintf("Sending file: %s", path))
-
-			if n, err := io.Copy(mw, targetItem); err != nil {
-				fmt.Println("Failed at: ", n)
-				bar.Finish()
+			if _, err := io.Copy(mw, targetItem); err != nil {
 				c.sendErr()
 				return err
 			}
 
-			// todo final progress bar never outputs a new line?
-			bar.Finish()
 			c.sendAck()
 		} else {
 			c.outputInfo(fmt.Sprintf("Sending empty file: %s", path))
@@ -384,4 +428,23 @@ func (c *Client) NewProgressBar(fileLength int) *pb.ProgressBar {
 	bar.SetMaxWidth(80)
 
 	return bar
+}
+
+// Wrapper to support cancellation
+type Reader struct {
+	*bufio.Reader
+
+	// Cancel an ongoing transfer
+	cancel chan struct{}
+}
+
+// Additional cancellation check
+func (r *Reader) Read(p []byte) (n int, err error) {
+	select {
+	case <-r.cancel:
+		log.Println("CANCELLED!!")
+		return 0, errors.New("Transfer cancelled")
+	default:
+		return r.Reader.Read(p)
+	}
 }
