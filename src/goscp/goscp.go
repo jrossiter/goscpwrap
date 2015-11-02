@@ -378,7 +378,7 @@ func (c *Client) handleItem(path string, info os.FileInfo, err error) error {
 		// Handle directories
 		if len(c.DestinationPath) != 0 {
 			// If not first directory
-			currentPath := strings.Split(c.DestinationPath[0], "/")
+			currentPath := strings.Split(filepath.Join(c.DestinationPath...), "/")
 			newPath := strings.Split(path, "/")
 
 			// <= slashes = going back up
