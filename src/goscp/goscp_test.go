@@ -46,7 +46,7 @@ func tearDown() {
 }
 
 func expectedError(t *testing.T, received, expected interface{}) {
-	t.Errorf("received: %v, expected: %v", received, expected)
+	t.Errorf("received: %q, expected: %q", received, expected)
 }
 
 func TestUpDirectory(t *testing.T) {
@@ -382,7 +382,84 @@ func TestHandleItem(t *testing.T) {
 	}
 }
 
-/*
-todo
-cancel
-*/
+func TestCancel(t *testing.T) {
+	// Send creation message
+	// Cancel
+	// Send another creation message
+	testsMessages := []string{
+		"C0644 15 goscp-cancel.txt",
+		"Cancel incoming\x00",
+		"C0644 15 goscp-cancel.txt",
+		"Transfer cancelled",
+		"io: read/write on closed pipe",
+	}
+
+	r, w := io.Pipe()
+	c := Client{
+		scpStdinPipe:    w,
+		ShowProgressBar: false,
+	}
+
+	filePath := "goscp-cancel.txt"
+	f, err := os.Create(filePath)
+	if err != nil {
+		t.Error("Unexpected error:", err)
+	}
+
+	f.Write([]byte("Cancel incoming"))
+	f.Close()
+
+	created = append(created, filePath)
+	stats, _ := os.Stat(filePath)
+	msgCounter := 0
+
+	go func() {
+		c.scpStdoutPipe = &reader{
+			Reader: bufio.NewReader(r),
+			cancel: make(chan struct{}, 1),
+		}
+
+		scanner := bufio.NewScanner(c.scpStdoutPipe)
+
+		for scanner.Scan() {
+			txt := scanner.Text()
+
+			if txt != testsMessages[msgCounter] {
+				expectedError(t, txt, testsMessages[msgCounter])
+			}
+			msgCounter++
+		}
+
+		err := scanner.Err()
+		if err != nil {
+			if err.Error() != testsMessages[msgCounter] {
+				expectedError(t, err.Error(), testsMessages[msgCounter])
+			}
+			msgCounter++
+		}
+		c.scpStdinPipe.Close()
+	}()
+
+	err = c.handleItem(filePath, stats, nil)
+	if err != nil {
+		t.Error("Unexpected error:", err)
+	}
+
+	// Output one more newline for convenience in reading from the pipe
+	fmt.Fprintf(c.scpStdinPipe, "\n")
+
+	go c.Cancel()
+
+	time.Sleep(time.Millisecond * 100)
+
+	err = c.handleItem(filePath, stats, nil)
+	if err != nil {
+		if err.Error() != testsMessages[msgCounter] {
+			expectedError(t, err.Error(), testsMessages[msgCounter])
+		}
+		msgCounter++
+	}
+
+	// Output one more newline for convenience in reading from the pipe
+	fmt.Fprintf(c.scpStdinPipe, "\n")
+}
