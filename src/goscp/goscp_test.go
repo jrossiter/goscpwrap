@@ -218,7 +218,7 @@ func TestFile(t *testing.T) {
 		c.SetDestinationPath(v.StartPath)
 
 		dummy := bytes.NewBuffer([]byte(v.FileContent))
-		rdr := &reader{Reader: bufio.NewReader(dummy)}
+		rdr := &readCanceller{Reader: bufio.NewReader(dummy)}
 		c.scpStdoutPipe = rdr
 
 		c.file(v.InputPath)
@@ -414,7 +414,7 @@ func TestCancel(t *testing.T) {
 	msgCounter := 0
 
 	go func() {
-		c.scpStdoutPipe = &reader{
+		c.scpStdoutPipe = &readCanceller{
 			Reader: bufio.NewReader(r),
 			cancel: make(chan struct{}, 1),
 		}
