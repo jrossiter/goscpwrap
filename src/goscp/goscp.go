@@ -114,7 +114,7 @@ func (c *Client) Download(remotePath string) {
 		}
 
 		// Initialise transfer
-		c.sendAck()
+		c.sendAck(c.scpStdinPipe)
 
 		// Wrapper to support cancellation
 		c.scpStdoutPipe = &reader{
@@ -137,7 +137,7 @@ func (c *Client) Download(remotePath string) {
 			c.outputInfo(fmt.Sprintf("Received: %s", msg))
 
 			// Confirm message
-			c.sendAck()
+			c.sendAck(c.scpStdinPipe)
 
 			switch {
 			case c.isFileCopyMsg(msg):
@@ -169,7 +169,7 @@ func (c *Client) Download(remotePath string) {
 			}
 
 			// Confirm message
-			c.sendAck()
+			c.sendAck(c.scpStdinPipe)
 		}
 	}()
 
@@ -224,7 +224,7 @@ func (c *Client) Upload(localPath string) {
 		// End transfer
 		paths := strings.Split(c.DestinationPath[0], "/")
 		for range paths {
-			c.sendEndOfDirectoryMessage()
+			c.sendEndOfDirectoryMessage(c.scpStdinPipe)
 		}
 	}()
 
@@ -238,13 +238,13 @@ func (c *Client) Upload(localPath string) {
 }
 
 // Send an acknowledgement message
-func (c *Client) sendAck() {
-	fmt.Fprint(c.scpStdinPipe, "\x00")
+func (c *Client) sendAck(w io.Writer) {
+	fmt.Fprint(w, "\x00")
 }
 
 // Send an error message
-func (c *Client) sendErr() {
-	fmt.Fprint(c.scpStdinPipe, "\x02")
+func (c *Client) sendErr(w io.Writer) {
+	fmt.Fprint(w, "\x02")
 }
 
 // Check if an incoming message is a file copy message
@@ -268,23 +268,23 @@ func (c *Client) isErrorMsg(s string) bool {
 }
 
 // Send a directory message while in source mode
-func (c *Client) sendDirectoryMessage(mode os.FileMode, dirname string) {
+func (c *Client) sendDirectoryMessage(w io.Writer, mode os.FileMode, dirname string) {
 	msg := fmt.Sprintf("D0%o 0 %s", mode, dirname)
-	fmt.Fprintln(c.scpStdinPipe, msg)
+	fmt.Fprintln(w, msg)
 	c.outputInfo(fmt.Sprintf("Sent: %s", msg))
 }
 
 // Send a end of directory message while in source mode
-func (c *Client) sendEndOfDirectoryMessage() {
+func (c *Client) sendEndOfDirectoryMessage(w io.Writer) {
 	msg := endDir
-	fmt.Fprintln(c.scpStdinPipe, msg)
+	fmt.Fprintln(w, msg)
 	c.outputInfo(fmt.Sprintf("Sent: %s", msg))
 }
 
 // Send a file message while in source mode
-func (c *Client) sendFileMessage(mode os.FileMode, size int64, filename string) {
+func (c *Client) sendFileMessage(w io.Writer, mode os.FileMode, size int64, filename string) {
 	msg := fmt.Sprintf("C0%o %d %s", mode, size, filename)
-	fmt.Fprintln(c.scpStdinPipe, msg)
+	fmt.Fprintln(w, msg)
 	c.outputInfo(fmt.Sprintf("Sent: %s", msg))
 }
 
@@ -334,7 +334,7 @@ func (c *Client) file(msg string) error {
 	}
 
 	if n, err := io.CopyN(w, c.scpStdoutPipe, int64(fileLen)); err != nil || n < int64(fileLen) {
-		c.sendErr()
+		c.sendErr(c.scpStdinPipe)
 		return err
 	}
 
@@ -385,12 +385,12 @@ func (c *Client) handleItem(path string, info os.FileInfo, err error) error {
 			if len(newPath) <= len(currentPath) {
 				// Send EOD messages for the amount of directories we go up
 				for i := len(newPath) - 1; i < len(currentPath); i++ {
-					c.sendEndOfDirectoryMessage()
+					c.sendEndOfDirectoryMessage(c.scpStdinPipe)
 				}
 			}
 		}
 		c.DestinationPath = []string{path}
-		c.sendDirectoryMessage(0644, filepath.Base(path))
+		c.sendDirectoryMessage(c.scpStdinPipe, 0644, filepath.Base(path))
 	} else {
 		// Handle regular files
 		targetItem, err := os.Open(path)
@@ -398,7 +398,7 @@ func (c *Client) handleItem(path string, info os.FileInfo, err error) error {
 			return err
 		}
 
-		c.sendFileMessage(0644, info.Size(), filepath.Base(path))
+		c.sendFileMessage(c.scpStdinPipe, 0644, info.Size(), filepath.Base(path))
 
 		if info.Size() > 0 {
 			var w io.Writer
@@ -414,14 +414,14 @@ func (c *Client) handleItem(path string, info os.FileInfo, err error) error {
 
 			c.outputInfo(fmt.Sprintf("Sending file: %s", path))
 			if _, err := io.Copy(w, targetItem); err != nil {
-				c.sendErr()
+				c.sendErr(c.scpStdinPipe)
 				return err
 			}
 
-			c.sendAck()
+			c.sendAck(c.scpStdinPipe)
 		} else {
 			c.outputInfo(fmt.Sprintf("Sending empty file: %s", path))
-			c.sendAck()
+			c.sendAck(c.scpStdinPipe)
 		}
 	}
 
