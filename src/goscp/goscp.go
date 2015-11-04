@@ -86,7 +86,7 @@ func (c *Client) GetErrorStack() []error {
 // Cancel an ongoing operation
 func (c *Client) Cancel() {
 	if c.scpStdoutPipe != nil {
-		c.scpStdoutPipe.cancel <- struct{}{}
+		close(c.scpStdoutPipe.cancel)
 	}
 }
 
