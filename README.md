@@ -25,7 +25,9 @@ c.Verbose = true
 c.ShowProgressBar = true
 
 // Each file being transferred has a progress bar output to console
-c.ProgressCallback = func(output string) {
+// Customise the progress bar
+c.ProgressBar.ShowSpeed = false
+c.ProgressBar.Callback = func(output string) {
     // This allows you to control what will happen instead 
 }
 
