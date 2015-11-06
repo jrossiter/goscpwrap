@@ -41,8 +41,8 @@ type Client struct {
 	// Show progress bar
 	ShowProgressBar bool
 
-	// Control progress bar output
-	ProgressCallback func(out string)
+	// Configurable progress bar
+	ProgressBar *pb.ProgressBar
 
 	// Stdin for SSH session
 	scpStdinPipe io.WriteCloser
@@ -54,11 +54,16 @@ type Client struct {
 // Returns a ssh.Client wrapper.
 // DestinationPath is set to the current directory by default.
 func NewClient(c *ssh.Client) *Client {
-	return &Client{
+	scpc := &Client{
 		SSHClient:       c,
 		DestinationPath: []string{"."},
 		ShowProgressBar: true,
 	}
+
+	// Total is set before progress starts
+	scpc.ProgressBar = scpc.newDefaultProgressBar(0)
+
+	return scpc
 }
 
 // Set where content will be sent
@@ -324,11 +329,11 @@ func (c *Client) file(msg string) error {
 
 	var w io.Writer
 	if c.ShowProgressBar {
-		bar := c.newProgressBar(fileLen)
-		bar.Start()
-		defer bar.Finish()
+		c.ProgressBar.Total = int64(fileLen)
+		c.ProgressBar.Start()
+		defer c.ProgressBar.Finish()
 
-		w = io.MultiWriter(localFile, bar)
+		w = io.MultiWriter(localFile, c.ProgressBar)
 	} else {
 		w = localFile
 	}
@@ -403,11 +408,11 @@ func (c *Client) handleItem(path string, info os.FileInfo, err error) error {
 		if info.Size() > 0 {
 			var w io.Writer
 			if c.ShowProgressBar {
-				bar := c.newProgressBar(int(info.Size()))
-				bar.Start()
-				defer bar.Finish()
+				c.ProgressBar.Total = info.Size()
+				c.ProgressBar.Start()
+				defer c.ProgressBar.Finish()
 
-				w = io.MultiWriter(c.scpStdinPipe, bar)
+				w = io.MultiWriter(c.scpStdinPipe, c.ProgressBar)
 			} else {
 				w = c.scpStdinPipe
 			}
@@ -435,9 +440,8 @@ func (c *Client) outputInfo(s ...string) {
 }
 
 // Create progress bar
-func (c *Client) newProgressBar(fileLength int) *pb.ProgressBar {
+func (c *Client) newDefaultProgressBar(fileLength int) *pb.ProgressBar {
 	bar := pb.New(fileLength)
-	bar.Callback = c.ProgressCallback
 	bar.ShowSpeed = true
 	bar.ShowTimeLeft = true
 	bar.ShowCounters = true
