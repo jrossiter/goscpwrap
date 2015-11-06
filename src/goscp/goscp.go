@@ -329,11 +329,11 @@ func (c *Client) file(msg string) error {
 
 	var w io.Writer
 	if c.ShowProgressBar {
-		c.ProgressBar.Total = int64(fileLen)
-		c.ProgressBar.Start()
-		defer c.ProgressBar.Finish()
+		bar := c.newProgressBar(fileLen)
+		bar.Start()
+		defer bar.Finish()
 
-		w = io.MultiWriter(localFile, c.ProgressBar)
+		w = io.MultiWriter(localFile, bar)
 	} else {
 		w = localFile
 	}
@@ -408,11 +408,11 @@ func (c *Client) handleItem(path string, info os.FileInfo, err error) error {
 		if info.Size() > 0 {
 			var w io.Writer
 			if c.ShowProgressBar {
-				c.ProgressBar.Total = info.Size()
-				c.ProgressBar.Start()
-				defer c.ProgressBar.Finish()
+				bar := c.newProgressBar(int(info.Size()))
+				bar.Start()
+				defer bar.Finish()
 
-				w = io.MultiWriter(c.scpStdinPipe, c.ProgressBar)
+				w = io.MultiWriter(c.scpStdinPipe, bar)
 			} else {
 				w = c.scpStdinPipe
 			}
@@ -439,7 +439,7 @@ func (c *Client) outputInfo(s ...string) {
 	}
 }
 
-// Create progress bar
+// Create a default progress bar
 func (c *Client) newDefaultProgressBar(fileLength int) *pb.ProgressBar {
 	bar := pb.New(fileLength)
 	bar.ShowSpeed = true
@@ -449,6 +449,28 @@ func (c *Client) newDefaultProgressBar(fileLength int) *pb.ProgressBar {
 	bar.SetRefreshRate(time.Second)
 	bar.SetWidth(80)
 	bar.SetMaxWidth(80)
+
+	return bar
+}
+
+// Creates a new progress bar based on the current settings
+func (c *Client) newProgressBar(fileLength int) *pb.ProgressBar {
+	bar := pb.New(fileLength)
+	bar.ShowPercent = c.ProgressBar.ShowPercent
+	bar.ShowCounters = c.ProgressBar.ShowCounters
+	bar.ShowSpeed = c.ProgressBar.ShowSpeed
+	bar.ShowTimeLeft = c.ProgressBar.ShowTimeLeft
+	bar.ShowBar = c.ProgressBar.ShowBar
+	bar.ShowFinalTime = c.ProgressBar.ShowFinalTime
+	bar.Output = c.ProgressBar.Output
+	bar.Callback = c.ProgressBar.Callback
+	bar.NotPrint = c.ProgressBar.NotPrint
+	bar.Units = c.ProgressBar.Units
+	bar.ForceWidth = c.ProgressBar.ForceWidth
+	bar.ManualUpdate = c.ProgressBar.ManualUpdate
+	bar.SetRefreshRate(c.ProgressBar.RefreshRate)
+	bar.SetWidth(c.ProgressBar.Width)
+	bar.SetMaxWidth(c.ProgressBar.Width)
 
 	return bar
 }
