@@ -178,7 +178,7 @@ func (c *Client) Download(remotePath string) {
 		}
 	}()
 
-	cmd := fmt.Sprintf("scp -rf %s", remotePath)
+	cmd := fmt.Sprintf("scp -rf %s", fmt.Sprintf("%q", remotePath))
 	if err := session.Run(cmd); err != nil {
 		c.addError(err)
 		return
@@ -233,7 +233,7 @@ func (c *Client) Upload(localPath string) {
 		}
 	}()
 
-	cmd := fmt.Sprintf("scp -rt %s", filepath.Join(c.DestinationPath...))
+	cmd := fmt.Sprintf("scp -rt %s", fmt.Sprintf("%q", filepath.Join(c.DestinationPath...)))
 	if err := session.Run(cmd); err != nil {
 		c.addError(err)
 		return
