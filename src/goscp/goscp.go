@@ -25,6 +25,7 @@ var (
 	endDir      = "E"
 )
 
+// Client wraps a ssh.Client and provides additional functionality.
 type Client struct {
 	SSHClient       *ssh.Client
 	DestinationPath []string
@@ -51,7 +52,7 @@ type Client struct {
 	scpStdoutPipe *readCanceller
 }
 
-// Returns a ssh.Client wrapper.
+// NewClient returns a ssh.Client wrapper.
 // DestinationPath is set to the current directory by default.
 func NewClient(c *ssh.Client) *Client {
 	scpc := &Client{
@@ -66,7 +67,7 @@ func NewClient(c *ssh.Client) *Client {
 	return scpc
 }
 
-// Set where content will be sent
+// SetDestinationPath sets where content will be sent.
 func (c *Client) SetDestinationPath(path string) {
 	c.DestinationPath = []string{path}
 }
@@ -83,19 +84,19 @@ func (c *Client) GetLastError() error {
 	return nil
 }
 
-// GetErrorStack returns all errors that have occurred so far
+// GetErrorStack returns all errors that have occurred so far.
 func (c *Client) GetErrorStack() []error {
 	return c.errors
 }
 
-// Cancel an ongoing operation
+// Cancel an ongoing operation.
 func (c *Client) Cancel() {
 	if c.scpStdoutPipe != nil {
 		close(c.scpStdoutPipe.cancel)
 	}
 }
 
-// Download remotePath to c.DestinationPath
+// Download remotePath to c.DestinationPath.
 func (c *Client) Download(remotePath string) {
 	session, err := c.SSHClient.NewSession()
 	if err != nil {
@@ -104,79 +105,7 @@ func (c *Client) Download(remotePath string) {
 	}
 	defer session.Close()
 
-	go func() {
-		c.scpStdinPipe, err = session.StdinPipe()
-		if err != nil {
-			c.addError(err)
-			return
-		}
-		defer c.scpStdinPipe.Close()
-
-		r, err := session.StdoutPipe()
-		if err != nil {
-			c.addError(err)
-			return
-		}
-
-		// Initialise transfer
-		c.sendAck(c.scpStdinPipe)
-
-		// Wrapper to support cancellation
-		c.scpStdoutPipe = &readCanceller{
-			Reader: bufio.NewReader(r),
-			cancel: make(chan struct{}, 1),
-		}
-
-		for {
-			c.outputInfo("Reading message from source")
-			msg, err := c.scpStdoutPipe.ReadString('\n')
-			if err != nil {
-				if err != io.EOF {
-					c.addError(err)
-				}
-				return
-			}
-
-			// Strip nulls and new lines
-			msg = strings.TrimSpace(strings.Trim(msg, "\x00"))
-			c.outputInfo(fmt.Sprintf("Received: %s", msg))
-
-			// Confirm message
-			c.sendAck(c.scpStdinPipe)
-
-			switch {
-			case c.isFileCopyMsg(msg):
-				// Handle incoming file
-				err := c.file(msg)
-				if err != nil {
-					c.addError(err)
-					return
-				}
-			case c.isDirCopyMsg(msg):
-				// Handling incoming directory
-				err := c.directory(msg)
-				if err != nil {
-					c.addError(err)
-					return
-				}
-			case msg == endDir:
-				// Directory finished, go up a directory
-				c.upDirectory()
-			case c.isWarningMsg(msg):
-				c.addError(fmt.Errorf("Warning message: [%q]\n", msg))
-				return
-			case c.isErrorMsg(msg):
-				c.addError(fmt.Errorf("Error message: [%q]\n", msg))
-				return
-			default:
-				c.addError(fmt.Errorf("Unhandled message: [%q]\n", msg))
-				return
-			}
-
-			// Confirm message
-			c.sendAck(c.scpStdinPipe)
-		}
-	}()
+	go c.handleDownload(session)
 
 	cmd := fmt.Sprintf("scp -rf %s", fmt.Sprintf("%q", remotePath))
 	if err := session.Run(cmd); err != nil {
@@ -187,7 +116,84 @@ func (c *Client) Download(remotePath string) {
 	return
 }
 
-// Upload localPath to c.DestinationPath
+// handleDownload handles message parsing to and from the session.
+func (c *Client) handleDownload(session *ssh.Session) {
+	var err error
+
+	c.scpStdinPipe, err = session.StdinPipe()
+	if err != nil {
+		c.addError(err)
+		return
+	}
+	defer c.scpStdinPipe.Close()
+
+	r, err := session.StdoutPipe()
+	if err != nil {
+		c.addError(err)
+		return
+	}
+
+	// Initialize transfer
+	c.sendAck(c.scpStdinPipe)
+
+	// Wrapper to support cancellation
+	c.scpStdoutPipe = &readCanceller{
+		Reader: bufio.NewReader(r),
+		cancel: make(chan struct{}, 1),
+	}
+
+	for {
+		c.outputInfo("Reading message from source")
+		msg, err := c.scpStdoutPipe.ReadString('\n')
+		if err != nil {
+			if err != io.EOF {
+				c.addError(err)
+			}
+			return
+		}
+
+		// Strip nulls and new lines
+		msg = strings.TrimSpace(strings.Trim(msg, "\x00"))
+		c.outputInfo(fmt.Sprintf("Received: %s", msg))
+
+		// Confirm message
+		c.sendAck(c.scpStdinPipe)
+
+		switch {
+		case c.isFileCopyMsg(msg):
+			// Handle incoming file
+			err := c.file(msg)
+			if err != nil {
+				c.addError(err)
+				return
+			}
+		case c.isDirCopyMsg(msg):
+			// Handling incoming directory
+			err := c.directory(msg)
+			if err != nil {
+				c.addError(err)
+				return
+			}
+		case msg == endDir:
+			// Directory finished, go up a directory
+			c.upDirectory()
+		case c.isWarningMsg(msg):
+			c.addError(fmt.Errorf("Warning message: [%q]\n", msg))
+			return
+		case c.isErrorMsg(msg):
+			c.addError(fmt.Errorf("Error message: [%q]\n", msg))
+			return
+		default:
+			c.addError(fmt.Errorf("Unhandled message: [%q]\n", msg))
+			return
+		}
+
+		// Confirm message
+		c.sendAck(c.scpStdinPipe)
+	}
+}
+
+// Upload localPath to c.DestinationPath.
 func (c *Client) Upload(localPath string) {
 	session, err := c.SSHClient.NewSession()
 	if err != nil {
@@ -196,42 +202,7 @@ func (c *Client) Upload(localPath string) {
 	}
 	defer session.Close()
 
-	go func() {
-		c.scpStdinPipe, err = session.StdinPipe()
-		if err != nil {
-			c.addError(err)
-			return
-		}
-		defer c.scpStdinPipe.Close()
-
-		r, err := session.StdoutPipe()
-		if err != nil {
-			c.addError(err)
-			return
-		}
-
-		// Wrapper to support cancellation
-		c.scpStdoutPipe = &readCanceller{
-			Reader: bufio.NewReader(r),
-			cancel: make(chan struct{}, 1),
-		}
-
-		// This has already been used in the cmd call below
-		// so it can be reused for 'end of directory' message handling
-		c.DestinationPath = []string{}
-
-		err = filepath.Walk(localPath, c.handleItem)
-		if err != nil {
-			c.addError(err)
-			return
-		}
-
-		// End transfer
-		paths := strings.Split(c.DestinationPath[0], "/")
-		for range paths {
-			c.sendEndOfDirectoryMessage(c.scpStdinPipe)
-		}
-	}()
+	go c.handleUpload(session, localPath)
 
 	cmd := fmt.Sprintf("scp -rt %s", fmt.Sprintf("%q", filepath.Join(c.DestinationPath...)))
 	if err := session.Run(cmd); err != nil {
@@ -242,58 +213,98 @@ func (c *Client) Upload(localPath string) {
 	return
 }
 
-// Send an acknowledgement message
+// handleDownload handles message parsing to and from the session.
+func (c *Client) handleUpload(session *ssh.Session, localPath string) {
+	var err error
+
+	c.scpStdinPipe, err = session.StdinPipe()
+	if err != nil {
+		c.addError(err)
+		return
+	}
+	defer c.scpStdinPipe.Close()
+
+	r, err := session.StdoutPipe()
+	if err != nil {
+		c.addError(err)
+		return
+	}
+
+	// Wrapper to support cancellation
+	c.scpStdoutPipe = &readCanceller{
+		Reader: bufio.NewReader(r),
+		cancel: make(chan struct{}, 1),
+	}
+
+	// This has already been used in the cmd call below
+	// so it can be reused for 'end of directory' message handling
+	c.DestinationPath = []string{}
+
+	err = filepath.Walk(localPath, c.handleItem)
+	if err != nil {
+		c.addError(err)
+		return
+	}
+
+	// End transfer
+	paths := strings.Split(c.DestinationPath[0], "/")
+	for range paths {
+		c.sendEndOfDirectoryMessage(c.scpStdinPipe)
+	}
+}
+
+// Send an acknowledgement message.
 func (c *Client) sendAck(w io.Writer) {
 	fmt.Fprint(w, "\x00")
 }
 
-// Send an error message
+// Send an error message.
 func (c *Client) sendErr(w io.Writer) {
 	fmt.Fprint(w, "\x02")
 }
 
-// Check if an incoming message is a file copy message
+// Check if an incoming message is a file copy message.
 func (c *Client) isFileCopyMsg(s string) bool {
 	return strings.HasPrefix(s, "C")
 }
 
-// Check if an incoming message is a directory copy message
+// Check if an incoming message is a directory copy message.
 func (c *Client) isDirCopyMsg(s string) bool {
 	return strings.HasPrefix(s, "D")
 }
 
-// Check if an incoming message is a warning
+// Check if an incoming message is a warning.
 func (c *Client) isWarningMsg(s string) bool {
 	return strings.HasPrefix(s, "\x01")
 }
 
-// Check if an incoming message is an error
+// Check if an incoming message is an error.
 func (c *Client) isErrorMsg(s string) bool {
 	return strings.HasPrefix(s, "\x02")
 }
 
-// Send a directory message while in source mode
+// Send a directory message while in source mode.
 func (c *Client) sendDirectoryMessage(w io.Writer, mode os.FileMode, dirname string) {
 	msg := fmt.Sprintf("D0%o 0 %s", mode, dirname)
 	fmt.Fprintln(w, msg)
 	c.outputInfo(fmt.Sprintf("Sent: %s", msg))
 }
 
-// Send a end of directory message while in source mode
+// Send a end of directory message while in source mode.
 func (c *Client) sendEndOfDirectoryMessage(w io.Writer) {
 	msg := endDir
 	fmt.Fprintln(w, msg)
 	c.outputInfo(fmt.Sprintf("Sent: %s", msg))
 }
 
-// Send a file message while in source mode
+// Send a file message while in source mode.
 func (c *Client) sendFileMessage(w io.Writer, mode os.FileMode, size int64, filename string) {
 	msg := fmt.Sprintf("C0%o %d %s", mode, size, filename)
 	fmt.Fprintln(w, msg)
 	c.outputInfo(fmt.Sprintf("Sent: %s", msg))
 }
 
-// Handle directory copy message in sink mode
+// Handle directory copy message in sink mode.
 func (c *Client) directory(msg string) error {
 	parts, err := c.parseMessage(msg, dirCopyRx)
 	if err != nil {
@@ -311,7 +322,7 @@ func (c *Client) directory(msg string) error {
 	return nil
 }
 
-// Handle file copy message in sink mode
+// Handle file copy message in sink mode.
 func (c *Client) file(msg string) error {
 	parts, err := c.parseMessage(msg, fileCopyRx)
 	if err != nil {
@@ -346,7 +357,7 @@ func (c *Client) file(msg string) error {
 	return nil
 }
 
-// Break down incoming protocol messages
+// Break down incoming protocol messages.
 func (c *Client) parseMessage(msg string, rx *regexp.Regexp) (map[string]string, error) {
 	parts := make(map[string]string)
 	matches := rx.FindStringSubmatch(msg)
@@ -360,14 +371,14 @@ func (c *Client) parseMessage(msg string, rx *regexp.Regexp) (map[string]string,
 	return parts, nil
 }
 
-// Go back up one directory
+// Go back up one directory.
 func (c *Client) upDirectory() {
 	if len(c.DestinationPath) > 0 {
 		c.DestinationPath = c.DestinationPath[:len(c.DestinationPath)-1]
 	}
 }
 
-// Handle each item coming through filepath.Walk
+// Handle each item coming through filepath.Walk.
 func (c *Client) handleItem(path string, info os.FileInfo, err error) error {
 	if err != nil {
 		// OS error
@@ -439,7 +450,7 @@ func (c *Client) outputInfo(s ...string) {
 	}
 }
 
-// Create a default progress bar
+// Create a default progress bar.
 func (c *Client) newDefaultProgressBar(fileLength int) *pb.ProgressBar {
 	bar := pb.New(fileLength)
 	bar.ShowSpeed = true
@@ -453,7 +464,7 @@ func (c *Client) newDefaultProgressBar(fileLength int) *pb.ProgressBar {
 	return bar
 }
 
-// Creates a new progress bar based on the current settings
+// Creates a new progress bar based on the current settings.
 func (c *Client) newProgressBar(fileLength int) *pb.ProgressBar {
 	bar := pb.New(fileLength)
 	bar.ShowPercent = c.ProgressBar.ShowPercent
@@ -475,7 +486,7 @@ func (c *Client) newProgressBar(fileLength int) *pb.ProgressBar {
 	return bar
 }
 
-// Wrapper to support cancellation
+// Wrapper to support cancellation.
 type readCanceller struct {
 	*bufio.Reader
 
@@ -483,7 +494,7 @@ type readCanceller struct {
 	cancel chan struct{}
 }
 
-// Additional cancellation check
+// Additional cancellation check.
 func (r *readCanceller) Read(p []byte) (n int, err error) {
 	select {
 	case <-r.cancel:
