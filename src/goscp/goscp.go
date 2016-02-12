@@ -253,7 +253,7 @@ func (c *Client) handleUpload(session *ssh.Session, localPath string) {
 	}
 }
 
-// Send an acknowledgement message.
+// Send an acknowledgment message.
 func (c *Client) sendAck(w io.Writer) {
 	fmt.Fprint(w, "\x00")
 }
