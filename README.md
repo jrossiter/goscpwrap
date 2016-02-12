@@ -1,5 +1,7 @@
 # goscp - A Go SCP wrapper 
 
+[![Go Report Card](https://goreportcard.com/badge/github.com/jrossiter/goscpwrap)](https://goreportcard.com/report/github.com/jrossiter/goscpwrap)
+
 goscp supports recursive file and directory handling for both uploads and downloads.
  
 goscp assumes that you've already established a successful SSH connection. 
